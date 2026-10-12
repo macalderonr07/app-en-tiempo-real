@@ -1,0 +1,502 @@
+<!DOCTYPE html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <!-- CSP en <meta> porque GitHub Pages no permite cabeceras propias (en Cloudflare
+         además se envía por cabecera, ver _headers). Solo código propio y el SDK de
+         Firebase; conexiones solo a Firebase y a OpenStreetMap. 'unsafe-inline' en
+         estilos: Leaflet posiciona el mapa con atributos style. -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' https://www.gstatic.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.tile.openstreetmap.org https://tile.openstreetmap.org; connect-src 'self' https://www.gstatic.com https://*.googleapis.com https://*.firebaseio.com https://routing.openstreetmap.de https://nominatim.openstreetmap.org https://tile.openstreetmap.org; media-src 'self' blob:; worker-src 'self'; manifest-src 'self'; frame-src https://*.firebaseapp.com; object-src 'none'; base-uri 'self'; form-action 'self'"
+    >
+    <title>Punto de Encuentro</title>
+    <meta
+      name="description"
+      content="Acuerda un lugar y una hora, y mira en tiempo real dónde está cada persona, a qué distancia y cuánto le falta para llegar.">
+    <meta name="theme-color" content="#0f766e">
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="icon" href="assets/icons/icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="assets/icons/apple-touch-icon.png">
+    <link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+    <link rel="stylesheet" href="assets/styles.css">
+    <script src="vendor/leaflet/leaflet.js" defer></script>
+    <script src="js/app.js" type="module"></script>
+  </head>
+  <body class="flex min-h-dvh flex-col bg-slate-100 font-sans text-slate-900 antialiased">
+    <a
+      href="#principal"
+      class="sr-only z-50 rounded-md bg-white px-4 py-3 font-semibold text-teal-900 focus:not-sr-only focus:fixed focus:left-3 focus:top-3"
+      >Saltar al contenido</a
+    >
+
+    <header class="sticky top-0 z-30 bg-teal-800 text-white shadow-md pt-[env(safe-area-inset-top)]">
+      <div class="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3">
+        <a href="#/" class="flex min-h-tap items-center gap-2 rounded-md font-bold tracking-tight">
+          <img src="assets/icons/icon.svg" alt="" width="32" height="32" class="h-8 w-8">
+          <span>Punto de Encuentro</span>
+        </a>
+        <p
+          id="estado-red"
+          role="status"
+          class="flex items-center gap-2 rounded-full bg-teal-900/60 px-3 py-1 text-sm"
+        >
+          <span aria-hidden="true" class="h-2.5 w-2.5 rounded-full bg-emerald-300" data-punto></span>
+          <span data-texto>En línea</span>
+        </p>
+      </div>
+    </header>
+
+    <main id="principal" tabindex="-1" class="mx-auto w-full max-w-6xl flex-1 px-4 pb-24 pt-4 outline-none">
+      <!-- ============================================================ cargando -->
+      <section id="vista-cargando" aria-labelledby="titulo-cargando" aria-busy="true" class="py-16 text-center">
+        <h1 id="titulo-cargando" tabindex="-1" class="text-xl font-semibold">Conectando con Firebase…</h1>
+        <p class="mt-2 text-slate-700">Preparando tu sesión. Esto toma unos segundos.</p>
+      </section>
+
+      <!-- ============================================================ error de configuración / conexión -->
+      <section id="vista-error" aria-labelledby="titulo-error" hidden class="mx-auto max-w-xl py-10">
+        <div class="rounded-2xl border border-red-200 bg-white p-6 shadow-sm">
+          <h1 id="titulo-error" tabindex="-1" class="text-xl font-bold text-red-800">No se pudo conectar</h1>
+          <p id="error-detalle" class="mt-3 text-slate-800"></p>
+          <p class="mt-3 text-slate-700">
+            Revisa la guía <strong>"Conectar Firebase"</strong> del archivo <code>README.md</code>.
+          </p>
+          <button
+            type="button"
+            id="btn-reintentar"
+            class="mt-5 min-h-tap rounded-lg bg-teal-700 px-5 font-semibold text-white hover:bg-teal-800"
+          >
+            Reintentar
+          </button>
+        </div>
+      </section>
+
+      <!-- ============================================================ inicio -->
+      <section id="vista-inicio" aria-labelledby="titulo-inicio" hidden>
+        <h1 id="titulo-inicio" tabindex="-1" class="text-2xl font-bold tracking-tight sm:text-3xl">
+          ¿Dónde nos vemos?
+        </h1>
+        <p class="mt-1 max-w-prose text-slate-700">
+          Acuerda un lugar y una hora. Cada persona comparte su ubicación y todos ven en tiempo real a qué
+          distancia está y cuánto le falta para llegar.
+        </p>
+
+        <div class="mt-6 grid gap-6 lg:grid-cols-2">
+          <!-- ---------------------------------------------- perfil -->
+          <section aria-labelledby="titulo-perfil" class="rounded-2xl bg-white p-5 shadow-sm">
+            <h2 id="titulo-perfil" class="text-lg font-semibold">Tu perfil</h2>
+            <form id="form-perfil" novalidate class="mt-4 space-y-4">
+              <div class="flex items-center gap-4">
+                <div
+                  id="perfil-avatar"
+                  class="grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-full bg-teal-100 text-2xl font-bold text-teal-900"
+                  aria-hidden="true"
+                ></div>
+                <div class="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    id="btn-foto"
+                    class="min-h-tap rounded-lg border border-teal-700 px-4 font-semibold text-teal-800 hover:bg-teal-50"
+                  >
+                    Tomar foto
+                  </button>
+                  <button
+                    type="button"
+                    id="btn-quitar-foto"
+                    hidden
+                    class="min-h-tap rounded-lg px-4 font-semibold text-slate-700 underline hover:text-slate-900"
+                  >
+                    Quitar foto
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label for="perfil-nombre" class="block font-medium">Nombre o apodo</label>
+                <input
+                  id="perfil-nombre"
+                  name="nombre"
+                  type="text"
+                  required
+                  minlength="2"
+                  maxlength="40"
+                  autocomplete="nickname"
+                  aria-describedby="perfil-nombre-error"
+                  class="mt-1 block min-h-tap w-full rounded-lg border border-slate-400 px-3 text-base">
+                <p id="perfil-nombre-error" class="mt-1 text-sm font-medium text-red-700" data-error></p>
+              </div>
+
+              <fieldset aria-describedby="perfil-modo-error">
+                <legend class="font-medium">¿Cómo vas a llegar?</legend>
+                <div id="perfil-modos" class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4"></div>
+                <p id="perfil-modo-error" class="mt-1 text-sm font-medium text-red-700" data-error></p>
+              </fieldset>
+
+              <div class="flex flex-wrap items-center gap-3">
+                <button
+                  type="submit"
+                  class="min-h-tap rounded-lg bg-teal-700 px-5 font-semibold text-white hover:bg-teal-800"
+                >
+                  Guardar perfil
+                </button>
+                <p id="perfil-estado" role="status" class="text-sm text-slate-700"></p>
+              </div>
+            </form>
+          </section>
+
+          <!-- ---------------------------------------------- unirse + recientes -->
+          <div class="space-y-6">
+            <section aria-labelledby="titulo-unirse" class="rounded-2xl bg-white p-5 shadow-sm">
+              <h2 id="titulo-unirse" class="text-lg font-semibold">Unirme con un código</h2>
+              <form id="form-unirse" novalidate class="mt-4 flex flex-wrap items-start gap-3">
+                <div class="min-w-0 flex-1">
+                  <label for="unirse-codigo" class="block font-medium">Código de 6 caracteres</label>
+                  <input
+                    id="unirse-codigo"
+                    name="codigo"
+                    type="text"
+                    required
+                    inputmode="text"
+                    autocapitalize="characters"
+                    autocomplete="off"
+                    spellcheck="false"
+                    maxlength="8"
+                    aria-describedby="unirse-codigo-error"
+                    class="mt-1 block min-h-tap w-full rounded-lg border border-slate-400 px-3 font-mono text-lg uppercase tracking-[0.3em]">
+                  <p id="unirse-codigo-error" class="mt-1 text-sm font-medium text-red-700" data-error></p>
+                </div>
+                <button
+                  type="submit"
+                  class="mt-7 min-h-tap rounded-lg bg-teal-700 px-5 font-semibold text-white hover:bg-teal-800"
+                >
+                  Unirme
+                </button>
+              </form>
+            </section>
+
+            <section aria-labelledby="titulo-recientes" class="rounded-2xl bg-white p-5 shadow-sm">
+              <h2 id="titulo-recientes" class="text-lg font-semibold">Mis reuniones recientes</h2>
+              <ul id="lista-recientes" class="mt-3 divide-y divide-slate-200"></ul>
+              <p id="recientes-vacio" class="mt-3 text-slate-700">Todavía no participaste en ninguna.</p>
+            </section>
+          </div>
+
+          <!-- ---------------------------------------------- crear -->
+          <section aria-labelledby="titulo-crear" class="rounded-2xl bg-white p-5 shadow-sm lg:col-span-2">
+            <h2 id="titulo-crear" class="text-lg font-semibold">Crear una reunión</h2>
+            <form id="form-crear" novalidate class="mt-4 grid gap-4 md:grid-cols-2">
+              <div>
+                <label for="crear-titulo" class="block font-medium">¿Qué plan es?</label>
+                <input
+                  id="crear-titulo"
+                  name="titulo"
+                  type="text"
+                  required
+                  minlength="2"
+                  maxlength="60"
+                  placeholder="Ej.: Cine del viernes"
+                  aria-describedby="crear-titulo-error"
+                  class="mt-1 block min-h-tap w-full rounded-lg border border-slate-400 px-3 text-base">
+                <p id="crear-titulo-error" class="mt-1 text-sm font-medium text-red-700" data-error></p>
+              </div>
+
+              <div>
+                <label for="crear-hora" class="block font-medium">Fecha y hora de llegada</label>
+                <input
+                  id="crear-hora"
+                  name="hora"
+                  type="datetime-local"
+                  required
+                  aria-describedby="crear-hora-error"
+                  class="mt-1 block min-h-tap w-full rounded-lg border border-slate-400 px-3 text-base">
+                <p id="crear-hora-error" class="mt-1 text-sm font-medium text-red-700" data-error></p>
+              </div>
+
+              <fieldset class="md:col-span-2" aria-describedby="crear-destino-error">
+                <legend class="font-medium">Punto de encuentro</legend>
+                <div class="mt-1 flex flex-wrap gap-2">
+                  <label for="crear-buscar" class="sr-only">Buscar dirección o lugar</label>
+                  <input
+                    id="crear-buscar"
+                    type="search"
+                    enterkeyhint="search"
+                    placeholder="Dirección, local o plaza"
+                    class="min-h-tap min-w-0 flex-1 rounded-lg border border-slate-400 px-3 text-base">
+                  <button
+                    type="button"
+                    id="btn-buscar"
+                    class="min-h-tap rounded-lg bg-slate-800 px-4 font-semibold text-white hover:bg-slate-900"
+                  >
+                    Buscar
+                  </button>
+                </div>
+                <div class="mt-2 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    id="btn-aqui"
+                    class="min-h-tap rounded-lg border border-slate-500 px-4 font-medium hover:bg-slate-50"
+                  >
+                    Usar mi ubicación actual
+                  </button>
+                  <button
+                    type="button"
+                    id="btn-elegir-mapa"
+                    aria-expanded="false"
+                    aria-controls="mapa-seleccion-caja"
+                    class="min-h-tap rounded-lg border border-slate-500 px-4 font-medium hover:bg-slate-50"
+                  >
+                    Elegir en el mapa
+                  </button>
+                </div>
+                <p id="buscar-estado" role="status" class="mt-2 text-sm text-slate-700"></p>
+                <div id="resultados" class="mt-2 space-y-2"></div>
+                <div id="mapa-seleccion-caja" hidden class="mt-3">
+                  <p id="mapa-seleccion-ayuda" class="mb-2 text-sm text-slate-700">
+                    Toca el mapa para marcar el punto exacto. Puedes ajustar el punto arrastrando el marcador.
+                  </p>
+                  <section
+                    id="mapa-seleccion"
+                    aria-label="Mapa para elegir el punto de encuentro"
+                    aria-describedby="mapa-seleccion-ayuda"
+                    class="h-72 w-full overflow-hidden rounded-xl border border-slate-300"
+                  ></section>
+                </div>
+                <p
+                  id="destino-elegido"
+                  aria-live="polite"
+                  class="mt-3 rounded-lg bg-teal-50 px-3 py-2 text-teal-900 empty:hidden"
+                ></p>
+                <p id="crear-destino-error" class="mt-1 text-sm font-medium text-red-700" data-error></p>
+              </fieldset>
+
+              <div>
+                <label for="crear-radio" class="block font-medium">Se considera "llegó" a menos de</label>
+                <select
+                  id="crear-radio"
+                  name="radioM"
+                  class="mt-1 block min-h-tap w-full rounded-lg border border-slate-400 bg-white px-3 text-base"
+                >
+                  <option value="25">25 metros (lugar preciso)</option>
+                  <option value="50" selected>50 metros (recomendado)</option>
+                  <option value="100">100 metros</option>
+                  <option value="200">200 metros (zona amplia)</option>
+                </select>
+              </div>
+
+              <div class="flex flex-wrap items-end gap-3">
+                <button
+                  type="submit"
+                  class="min-h-tap rounded-lg bg-teal-700 px-5 font-semibold text-white hover:bg-teal-800 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Crear y compartir
+                </button>
+                <p id="crear-estado" role="status" class="text-sm text-slate-700"></p>
+              </div>
+            </form>
+          </section>
+        </div>
+      </section>
+
+      <!-- ============================================================ reunión -->
+      <section id="vista-reunion" aria-labelledby="titulo-reunion" hidden>
+        <div class="rounded-2xl bg-white p-5 shadow-sm">
+          <div class="flex flex-wrap items-start justify-between gap-3">
+            <div class="min-w-0">
+              <h1 id="titulo-reunion" tabindex="-1" class="break-words text-2xl font-bold tracking-tight">Reunión</h1>
+              <p class="mt-1 break-words text-slate-800">
+                <span class="font-medium">Lugar:</span> <span id="r-destino"></span>
+              </p>
+              <p class="mt-1 text-slate-800">
+                <span class="font-medium">Hora acordada:</span> <time id="r-hora"></time>
+                <span id="r-cuenta" class="ml-1 inline-block rounded-full bg-slate-100 px-2 py-0.5 text-sm font-semibold"></span>
+              </p>
+            </div>
+            <div class="flex flex-wrap items-center gap-2">
+              <p class="text-sm text-slate-700">
+                Código <span id="r-codigo" class="ml-1 font-mono text-lg font-bold tracking-widest text-slate-900"></span>
+              </p>
+              <button
+                type="button"
+                id="btn-invitar"
+                class="min-h-tap rounded-lg bg-teal-700 px-4 font-semibold text-white hover:bg-teal-800"
+              >
+                Invitar
+              </button>
+            </div>
+          </div>
+          <p
+            id="r-finalizada"
+            hidden
+            class="mt-3 rounded-lg bg-amber-100 px-3 py-2 font-medium text-amber-900"
+          >
+            Esta reunión fue finalizada por quien la creó. Ya no se comparten ubicaciones.
+          </p>
+        </div>
+
+        <div class="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_24rem]">
+          <div class="space-y-4">
+            <!-- ---------------------------------------------- mi estado -->
+            <section aria-labelledby="titulo-mi-estado" class="rounded-2xl bg-white p-5 shadow-sm">
+              <h2 id="titulo-mi-estado" class="text-lg font-semibold">Tu llegada</h2>
+              <p id="mi-resumen" class="mt-2 text-base text-slate-900"></p>
+              <p id="mi-precision" class="mt-1 text-sm text-slate-700"></p>
+              <p id="mi-error" role="alert" class="mt-2 text-sm font-medium text-red-700 empty:hidden"></p>
+              <div class="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  id="btn-compartir"
+                  aria-pressed="false"
+                  class="min-h-tap rounded-lg border-2 border-teal-700 px-4 font-semibold text-teal-800 aria-pressed:bg-teal-700 aria-pressed:text-white"
+                >
+                  Compartir mi ubicación
+                </button>
+                <button
+                  type="button"
+                  id="btn-llegue"
+                  class="min-h-tap rounded-lg bg-emerald-700 px-4 font-semibold text-white hover:bg-emerald-800 disabled:opacity-60"
+                >
+                  Ya llegué
+                </button>
+                <button
+                  type="button"
+                  id="btn-pantalla"
+                  aria-pressed="false"
+                  class="min-h-tap rounded-lg border border-slate-500 px-4 font-medium aria-pressed:border-slate-800 aria-pressed:bg-slate-800 aria-pressed:text-white"
+                >
+                  Pantalla siempre encendida
+                </button>
+              </div>
+            </section>
+
+            <!-- ---------------------------------------------- mapa -->
+            <section aria-labelledby="titulo-mapa" class="rounded-2xl bg-white p-3 shadow-sm sm:p-4">
+              <div class="flex items-center justify-between gap-2 px-1">
+                <h2 id="titulo-mapa" class="text-lg font-semibold">Mapa en vivo</h2>
+                <button
+                  type="button"
+                  id="btn-encuadrar"
+                  class="min-h-tap rounded-lg px-3 font-medium text-teal-800 underline hover:text-teal-950"
+                >
+                  Ver a todos
+                </button>
+              </div>
+              <p id="mapa-nota" class="sr-only">
+                El mapa es visual. La lista de participantes contiene la misma información en texto.
+              </p>
+              <section
+                id="mapa"
+                aria-label="Mapa con el punto de encuentro y la posición de cada participante"
+                aria-describedby="mapa-nota"
+                class="mt-2 h-[55vh] min-h-72 w-full overflow-hidden rounded-xl border border-slate-300 lg:h-[34rem]"
+              ></section>
+            </section>
+          </div>
+
+          <!-- ---------------------------------------------- participantes -->
+          <section aria-labelledby="titulo-participantes" class="rounded-2xl bg-white p-5 shadow-sm">
+            <h2 id="titulo-participantes" class="text-lg font-semibold">Participantes</h2>
+            <h3 id="titulo-faltan" class="mt-3 text-base font-semibold text-slate-800">Faltan llegar</h3>
+            <ul id="lista-faltan" aria-labelledby="titulo-faltan" class="mt-2 space-y-3"></ul>
+            <h3 id="titulo-llegaron" class="mt-5 text-base font-semibold text-slate-800">Ya llegaron</h3>
+            <ul id="lista-llegaron" aria-labelledby="titulo-llegaron" class="mt-2 space-y-3"></ul>
+            <p class="mt-4 text-xs text-slate-700">
+              Distancia y tiempo calculados por calle con OpenStreetMap; si no hay ruta disponible se marcan como
+              "aprox." (línea recta × 1,3).
+            </p>
+          </section>
+        </div>
+
+        <div class="mt-6 flex flex-wrap justify-end gap-3">
+          <button
+            type="button"
+            id="btn-finalizar"
+            hidden
+            class="min-h-tap rounded-lg border border-red-700 px-4 font-semibold text-red-800 hover:bg-red-50"
+          >
+            Finalizar reunión
+          </button>
+          <button
+            type="button"
+            id="btn-salir"
+            class="min-h-tap rounded-lg bg-slate-800 px-4 font-semibold text-white hover:bg-slate-900"
+          >
+            Salir y borrar mi ubicación
+          </button>
+        </div>
+      </section>
+    </main>
+
+    <footer class="border-t border-slate-300 bg-white px-4 py-4 text-center text-sm text-slate-700">
+      Mapas y rutas ©
+      <a class="underline" href="https://www.openstreetmap.org/copyright" rel="noopener" target="_blank"
+        >colaboradores de OpenStreetMap<span class="sr-only"> (abre en una pestaña nueva)</span></a
+      >. Datos en tiempo real con Firebase.
+    </footer>
+
+    <!-- ============================================================ diálogo cámara -->
+    <dialog
+      id="dialogo-camara"
+      aria-labelledby="titulo-camara"
+      class="w-[min(100%-2rem,28rem)] rounded-2xl p-0 shadow-xl backdrop:bg-slate-950/70"
+    >
+      <div class="p-5">
+        <h2 id="titulo-camara" class="text-lg font-semibold">Foto de perfil</h2>
+        <p id="camara-estado" role="status" class="mt-1 text-sm text-slate-700"></p>
+        <div class="relative mt-3 aspect-square overflow-hidden rounded-xl bg-slate-900">
+          <video id="camara-video" playsinline muted class="h-full w-full -scale-x-100 object-cover"></video>
+          <img id="camara-vista" src="assets/icons/icon.svg" alt="Vista previa de la foto tomada" hidden class="absolute inset-0 h-full w-full object-cover">
+        </div>
+        <div class="mt-4 flex flex-wrap gap-2">
+          <button type="button" id="btn-capturar" class="min-h-tap rounded-lg bg-teal-700 px-4 font-semibold text-white hover:bg-teal-800">
+            Tomar foto
+          </button>
+          <button type="button" id="btn-repetir" hidden class="min-h-tap rounded-lg border border-slate-500 px-4 font-medium">
+            Repetir
+          </button>
+          <button type="button" id="btn-usar-foto" hidden class="min-h-tap rounded-lg bg-teal-700 px-4 font-semibold text-white hover:bg-teal-800">
+            Usar esta foto
+          </button>
+          <label class="inline-flex min-h-tap cursor-pointer items-center rounded-lg border border-slate-500 px-4 font-medium focus-within:outline focus-within:outline-2 focus-within:outline-teal-700">
+            Elegir archivo
+            <input id="camara-archivo" type="file" accept="image/*" capture="user" class="sr-only">
+          </label>
+          <button type="button" id="btn-cerrar-camara" class="ml-auto min-h-tap rounded-lg px-4 font-medium underline">
+            Cancelar
+          </button>
+        </div>
+      </div>
+    </dialog>
+
+    <!-- ============================================================ diálogo confirmar -->
+    <dialog
+      id="dialogo-confirmar"
+      aria-labelledby="confirmar-titulo"
+      aria-describedby="confirmar-texto"
+      class="w-[min(100%-2rem,26rem)] rounded-2xl p-0 shadow-xl backdrop:bg-slate-950/70"
+    >
+      <form method="dialog" class="p-5">
+        <h2 id="confirmar-titulo" class="text-lg font-semibold">Confirmar</h2>
+        <p id="confirmar-texto" class="mt-2 text-slate-800"></p>
+        <div class="mt-5 flex justify-end gap-2">
+          <button type="submit" value="no" class="min-h-tap rounded-lg border border-slate-500 px-4 font-medium">Cancelar</button>
+          <button type="submit" value="si" id="confirmar-si" class="min-h-tap rounded-lg bg-red-700 px-4 font-semibold text-white hover:bg-red-800">Confirmar</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Avisos: el visual (toast) y uno solo para lectores de pantalla. -->
+    <div
+      id="toast"
+      role="status"
+      class="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center px-4 pb-[calc(1rem+env(safe-area-inset-bottom))]"
+    >
+      <p
+        id="toast-texto"
+        class="max-w-md rounded-xl bg-slate-900 px-4 py-3 text-center text-white shadow-lg empty:hidden"
+      ></p>
+    </div>
+    <div id="anuncios" aria-live="polite" class="sr-only"></div>
+  </body>
+</html>

@@ -1,0 +1,137 @@
+rules_version = '2';
+
+// Reglas de seguridad de Cloud Firestore para Punto de Encuentro.
+// El cliente NO es de confianza: aquí se repiten las validaciones de
+// src/js/model/reunion.js y se limita quién puede leer y escribir qué.
+//
+// Resumen:
+//   usuarios/{uid}         solo su dueño lee/escribe
+//   reuniones/{codigo}     se lee conociendo el código (no se pueden listar);
+//                          solo quien la creó la modifica
+//   .../participantes/{uid} los lee quien ya es participante; cada quien escribe
+//                          únicamente su propio documento
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function autenticado() {
+      return request.auth != null;
+    }
+
+    function esDueno(uid) {
+      return autenticado() && request.auth.uid == uid;
+    }
+
+    function texto(v, min, max) {
+      return v is string && v.size() >= min && v.size() <= max;
+    }
+
+    function numero(v) {
+      return v is int || v is float;
+    }
+
+    function numeroONulo(v) {
+      return v == null || numero(v);
+    }
+
+    function coordenada(p) {
+      return p is map
+        && numero(p.lat) && p.lat >= -90 && p.lat <= 90
+        && numero(p.lng) && p.lng >= -180 && p.lng <= 180;
+    }
+
+    function fotoValida(f) {
+      return f is string && (f == "" || (f.size() <= 60000 && f.matches('^data:image/(webp|jpeg);base64,.*')));
+    }
+
+    function modoValido(m) {
+      return m in ['pie', 'bici', 'auto', 'transporte'];
+    }
+
+    // ------------------------------------------------------------ usuarios
+    match /usuarios/{uid} {
+      allow read, delete: if esDueno(uid);
+      allow create, update: if esDueno(uid)
+        && request.resource.data.keys().hasOnly(['nombre', 'modo', 'foto', 'recientes', 'actualizadoEn'])
+        && (!('nombre' in request.resource.data) || texto(request.resource.data.nombre, 2, 40))
+        && (!('modo' in request.resource.data) || modoValido(request.resource.data.modo))
+        && (!('foto' in request.resource.data) || fotoValida(request.resource.data.foto))
+        && (!('recientes' in request.resource.data)
+            || (request.resource.data.recientes is list && request.resource.data.recientes.size() <= 8))
+        && request.resource.data.actualizadoEn == request.time;
+    }
+
+    // ------------------------------------------------------------ reuniones
+    function reunionValida(d) {
+      return d.keys().hasOnly(['titulo', 'destino', 'hora', 'radioM', 'creadorUid', 'finalizada', 'creadaEn', 'expiraEn'])
+        && texto(d.titulo, 2, 60)
+        && coordenada(d.destino) && texto(d.destino.nombre, 1, 120)
+        && d.hora is timestamp
+        && d.radioM in [25, 50, 100, 200]
+        && d.finalizada is bool
+        && d.expiraEn is timestamp;
+    }
+
+    match /reuniones/{codigo} {
+      // get sí (hay que conocer el código), list no: nadie puede enumerar reuniones.
+      allow get: if autenticado();
+      allow list: if false;
+
+      allow create: if autenticado()
+        && codigo.matches('^[A-HJKMNP-Z2-9]{6}$')
+        && reunionValida(request.resource.data)
+        && request.resource.data.creadorUid == request.auth.uid
+        && request.resource.data.creadaEn == request.time
+        && request.resource.data.finalizada == false
+        && request.resource.data.hora > request.time - duration.value(1, 'h')
+        && request.resource.data.hora < request.time + duration.value(30, 'd');
+
+      // Solo quien la creó puede finalizarla (no cambiar destino, hora ni dueño).
+      allow update: if esDueno(resource.data.creadorUid)
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['finalizada'])
+        && request.resource.data.finalizada == true;
+
+      allow delete: if esDueno(resource.data.creadorUid);
+
+      // ---------------------------------------------------------- participantes
+      function reunion() {
+        return get(/databases/$(database)/documents/reuniones/$(codigo)).data;
+      }
+
+      function participanteValido(d) {
+        return d.keys().hasOnly(['nombre', 'foto', 'modo', 'color', 'estado', 'pos', 'dist', 'distRuta', 'eta',
+                                 'etaFuente', 'actualizadoEn', 'llegoEn', 'unidoEn', 'expiraEn'])
+          && texto(d.nombre, 2, 40)
+          && fotoValida(d.foto)
+          && modoValido(d.modo)
+          && d.color is int && d.color >= 0 && d.color < 8
+          && d.estado in ['esperando', 'en-camino', 'llego', 'pausado']
+          && (d.pos == null || (coordenada(d.pos) && numero(d.pos.prec) && d.pos.prec >= 0))
+          && numeroONulo(d.get('dist', null))
+          && numeroONulo(d.get('distRuta', null))
+          && numeroONulo(d.get('eta', null))
+          && d.actualizadoEn == request.time
+          && d.expiraEn is timestamp;
+      }
+
+      match /participantes/{uid} {
+        // El propio documento siempre; los demás, solo si ya está unido a la reunión.
+        allow read: if esDueno(uid) || autenticado()
+          && exists(/databases/$(database)/documents/reuniones/$(codigo)/participantes/$(request.auth.uid));
+
+        // Unirse solo si la reunión existe y no está finalizada.
+        allow create: if esDueno(uid)
+          && reunion().finalizada == false
+          && participanteValido(request.resource.data);
+
+        // Actualizar la propia ubicación; tras finalizar solo se permite pausar.
+        allow update: if esDueno(uid)
+          && participanteValido(request.resource.data)
+          && (reunion().finalizada == false || request.resource.data.estado == 'pausado');
+
+        // Borrarse uno mismo, o que quien creó la reunión limpie participantes.
+        allow delete: if esDueno(uid) || esDueno(reunion().creadorUid);
+      }
+    }
+  }
+}

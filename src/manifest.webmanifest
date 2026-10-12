@@ -1,0 +1,19 @@
+{
+  "name": "Punto de Encuentro",
+  "short_name": "Encuentro",
+  "description": "Mira en tiempo real dónde está cada persona, a qué distancia y cuánto le falta para llegar al punto de encuentro.",
+  "lang": "es",
+  "start_url": "./#/",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f1f5f9",
+  "theme_color": "#0f766e",
+  "categories": ["navigation", "social", "travel"],
+  "icons": [
+    { "src": "assets/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "assets/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "assets/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "assets/icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

@@ -1,0 +1,99 @@
+# Verifica Punto de Encuentro y, SOLO si todo pasa, lo publica en GitHub Pages.
+#
+#   verificar  -> pruebas unitarias del modelo (Vincenty, Kalman, ETA, reglas),
+#                 build (Tailwind + Leaflet + config de Firebase), HTML válido y
+#                 pruebas en Chromium (celular + escritorio, axe WCAG 2.2 AA,
+#                 flujo completo en tiempo real con Firebase simulado).
+#   publicar   -> sube dist/ (exactamente lo que se probó) a Pages. Si "verificar"
+#                 falla, este job no corre y el sitio publicado queda como estaba.
+#
+# En un pull request solo se verifica (no se publica).
+#
+# La configuración web de Firebase llega como VARIABLES del repositorio
+# (Settings -> Secrets and variables -> Actions -> Variables): FIREBASE_API_KEY,
+# FIREBASE_AUTH_DOMAIN, FIREBASE_PROJECT_ID, FIREBASE_STORAGE_BUCKET,
+# FIREBASE_MESSAGING_SENDER_ID, FIREBASE_APP_ID. No son secretos (quedan públicos
+# en la página); la seguridad la dan las reglas de Firestore.
+
+name: Verificar y publicar
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Nunca dos publicaciones a la vez; la que está corriendo termina.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  verificar:
+    name: Verificar el sitio
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      FIREBASE_API_KEY: ${{ vars.FIREBASE_API_KEY }}
+      FIREBASE_AUTH_DOMAIN: ${{ vars.FIREBASE_AUTH_DOMAIN }}
+      FIREBASE_PROJECT_ID: ${{ vars.FIREBASE_PROJECT_ID }}
+      FIREBASE_STORAGE_BUCKET: ${{ vars.FIREBASE_STORAGE_BUCKET }}
+      FIREBASE_MESSAGING_SENDER_ID: ${{ vars.FIREBASE_MESSAGING_SENDER_ID }}
+      FIREBASE_APP_ID: ${{ vars.FIREBASE_APP_ID }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Pruebas unitarias del modelo
+        run: npm test
+
+      - name: Comprobar configuración de Firebase
+        if: github.event_name != 'pull_request'
+        run: |
+          for v in FIREBASE_API_KEY FIREBASE_AUTH_DOMAIN FIREBASE_PROJECT_ID FIREBASE_APP_ID; do
+            if [ -z "${!v}" ]; then echo "::error::Falta la variable $v del repositorio"; exit 1; fi
+          done
+
+      - name: Build (Tailwind, Leaflet, config de Firebase, Service Worker)
+        run: npm run build
+
+      - name: Validación de HTML
+        run: npm run verificar:html
+
+      - name: Instalar Chromium para las pruebas
+        run: npx playwright install --with-deps chromium
+
+      - name: Pruebas en navegador (celular, escritorio, accesibilidad, tiempo real)
+        run: npm run verificar:e2e
+
+      - name: Subir el sitio verificado
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: dist
+
+  publicar:
+    name: Publicar en GitHub Pages
+    needs: verificar
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.despliegue.outputs.page_url }}
+    steps:
+      - name: Desplegar
+        id: despliegue
+        uses: actions/deploy-pages@v4

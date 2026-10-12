@@ -1,0 +1,8 @@
+node_modules/
+dist/
+# Configuración web de Firebase del proyecto real (se genera o se copia del .example).
+src/js/config/firebase-config.js
+.firebase/
+# Generados por npm run build dentro de src/ (para poder abrir src/ con Live Server).
+src/assets/styles.css
+src/vendor/
